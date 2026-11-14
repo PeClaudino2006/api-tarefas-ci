@@ -1,0 +1,111 @@
+﻿name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  qualidade:
+    name: Qualidade (lint, formatação e testes unitários)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Preparar o Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Análise estática (ESLint)
+        run: npm run lint
+
+      - name: Análise de formatação (Prettier)
+        run: npm run format:check
+
+      - name: Testes unitários
+        run: npm run test:unit
+
+  seguranca:
+    name: Segurança (CodeQL e auditoria de dependências)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Iniciar o CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+
+      - name: Análise estática de segurança (CodeQL)
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:javascript-typescript
+
+      - name: Preparar o Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Auditoria de dependências de produção
+        run: npm audit --omit=dev --audit-level=high
+
+  build-integracao:
+    name: Build e testes de integração (PostgreSQL)
+    needs: qualidade
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: tarefas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d tarefas"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://app:app@localhost:5432/tarefas
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Preparar o Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Testes de integração
+        run: npm run test:integration
+
+  imagem:
+    name: Criação da imagem Docker
+    needs: [qualidade, seguranca, build-integracao]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Construir a imagem Docker
+        run: docker build -t api-tarefas-ci:${{ github.sha }} .
